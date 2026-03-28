@@ -32,10 +32,11 @@ import {
   closePosition,
   getAccountState,
   type AccountState,
+  type AgentConfig,
 } from "./trade-executor.js";
 
 // ---------------------------------------------------------------------------
-// Config
+// Config & Agents
 // ---------------------------------------------------------------------------
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -64,6 +65,40 @@ const config: StrategyConfig = {
   emaTrend: envInt("EMA_TREND") ?? DEFAULT_CONFIG.emaTrend,
 };
 
+type BotAgent = AgentConfig & { active: boolean };
+export const agents: Record<string, BotAgent> = {};
+
+if (process.env.ICHIMOKU_LITE_AGENT_API_KEY) {
+  agents["ichi"] = {
+    name: "Ichimoku",
+    apiKey: process.env.ICHIMOKU_LITE_AGENT_API_KEY,
+    hlWallet: process.env.ICHIMOKU_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.ICHIMOKU_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
+if (process.env.VIRGEN_LITE_AGENT_API_KEY) {
+  agents["virgen"] = {
+    name: "Virgen Capital",
+    apiKey: process.env.VIRGEN_LITE_AGENT_API_KEY,
+    hlWallet: process.env.VIRGEN_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.VIRGEN_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
+// Fallback logic for backward compatibility
+if (Object.keys(agents).length === 0 && process.env.LITE_AGENT_API_KEY) {
+  agents["default"] = {
+    name: "Default Agent",
+    apiKey: process.env.LITE_AGENT_API_KEY,
+    hlWallet: process.env.HL_WALLET_ADDRESS || "",
+    subaccount: process.env.SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
 const SCAN_INTERVAL_MS = 30_000;
 const ACTIVE_INTERVAL_MS = 5_000;
 
@@ -71,7 +106,6 @@ const ACTIVE_INTERVAL_MS = 5_000;
 // State
 // ---------------------------------------------------------------------------
 
-let tradingActive = false;
 let dryRunMode = true; // Start in dry-run for safety
 let loopTimer: ReturnType<typeof setTimeout> | null = null;
 let loopRunning = false;
@@ -124,58 +158,114 @@ function isAuthorized(msg: TgMessage): boolean {
 // Telegram Commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/start$/, async (msg) => {
+bot.onText(/\/(start_ichi|start_virgen|start_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
+  const cmd = match?.[1] || "";
 
-  if (tradingActive) {
-    await send("⚠️ Bot zaten çalışıyor. Durdurmak için /stop");
-    return;
+  let activated: string[] = [];
+
+  if (cmd === "start_ichi" || cmd === "start_all") {
+    if (agents["ichi"]) {
+      agents["ichi"].active = true;
+      activated.push("Ichimoku");
+    } else {
+      await send("⚠️ Ichimoku kimlik bilgileri (.env) bulunamadı.");
+    }
   }
 
-  tradingActive = true;
+  if (cmd === "start_virgen" || cmd === "start_all") {
+    if (agents["virgen"]) {
+      agents["virgen"].active = true;
+      activated.push("Virgen Capital");
+    } else {
+      await send("⚠️ Virgen Capital kimlik bilgileri (.env) bulunamadı.");
+    }
+  }
+
+  if (activated.length === 0) return;
+
   const modeText = dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
   await send(
-    `⛩ *Ichimoku Kinko Hyo Trading Bot Başlatıldı*\n\n` +
+    `⛩ *Çalıştırılan Ajanlar: ${activated.join(", ")}*\n\n` +
     `Mode: ${modeText}\n` +
     `Pairs: ${config.pairs.join(", ")}\n` +
     `Timeframe: ${config.timeframe}\n` +
-    `Leverage: ${config.leverage}x\n` +
-    `Size: ${config.sizeUsdc} USDC\n` +
+    `Lev: ${config.leverage}x | Size: ${config.sizeUsdc} USDC\n` +
     `TP: $${config.tpUsdc} / SL: $${config.slUsdc}\n\n` +
     `Taramaya başlıyorum... 🔍`
   );
 
-  startTradingLoop();
+  if (!loopRunning) {
+    startTradingLoop();
+  }
 });
 
-bot.onText(/\/stop$/, async (msg) => {
+bot.onText(/\/(stop_ichi|stop_virgen|stop_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
+  const cmd = match?.[1] || "";
 
-  if (!tradingActive) {
-    await send("Bot zaten durmuş durumda.");
-    return;
+  let deactivated: string[] = [];
+
+  if (cmd === "stop_ichi" || cmd === "stop_all") {
+    if (agents["ichi"]) {
+      agents["ichi"].active = false;
+      deactivated.push("Ichimoku");
+    }
   }
 
-  tradingActive = false;
-  loopRunning = false;
-  if (loopTimer) {
-    clearTimeout(loopTimer);
-    loopTimer = null;
+  if (cmd === "stop_virgen" || cmd === "stop_all") {
+    if (agents["virgen"]) {
+      agents["virgen"].active = false;
+      deactivated.push("Virgen Capital");
+    }
   }
-  await send("🛑 Bot durduruldu.");
+
+  if (deactivated.length > 0) {
+    await send(`🛑 Durdurulan Ajanlar: ${deactivated.join(", ")}`);
+  }
+
+  const anyActive = Object.values(agents).some(a => a.active);
+  if (!anyActive && loopRunning) {
+    loopRunning = false;
+    if (loopTimer) {
+      clearTimeout(loopTimer);
+      loopTimer = null;
+    }
+    await send("Tüm ajanlar durduruldu. Tarama döngüsü askıya alındı.");
+  }
 });
 
 bot.onText(/\/status$/, async (msg) => {
   if (!isAuthorized(msg)) return;
 
-  const state = await getAccountState();
-  const modeText = !tradingActive ? "⚫ Kapalı" : dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
+  let anyActive = Object.values(agents).some(a => a.active);
+  const modeText = !anyActive ? "⚫ Kapalı" : dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
+  
+  let text = `⛩ *Bot Status*\nMode: ${modeText}\n\n`;
 
-  let text =
-    `⛩ *Ichimoku Kinko Hyo — Status*\n\n` +
-    `Mode: ${modeText}\n` +
-    `Balance: $${state.value.toFixed(2)}\n` +
-    `Address: \`${state.address.slice(0, 10)}...\`\n\n`;
+  for (const key of Object.keys(agents)) {
+    const agent = agents[key];
+    text += `🤖 *${agent.name}* [${agent.active ? "🟢 AKTİF" : "⚪ PASİF"}]\n`;
+    
+    try {
+      const state = await getAccountState(agent);
+      text += `Balance: $${state.value.toFixed(2)}\n`;
+
+      // Active positions
+      if (state.activePositions.length > 0) {
+        text += `Açık Pozisyonlar:\n`;
+        for (const pos of state.activePositions) {
+          const emoji = pos.pnl >= 0 ? "🟢" : "🔴";
+          text += `  └ ${emoji} ${pos.coin} ${pos.side.toUpperCase()} | PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n`;
+        }
+      } else {
+        text += `  └ _Açık pozisyon yok_\n`;
+      }
+    } catch (e: any) {
+      text += `❌ Bilgi alınamadı: ${e.message}\n`;
+    }
+    text += `\n`;
+  }
 
   // Market data
   text += `📊 *Piyasa Durumu*\n`;
@@ -187,17 +277,6 @@ bot.onText(/\/status$/, async (msg) => {
     } else {
       text += `${pair}: ❌ Veri yok\n`;
     }
-  }
-
-  // Active positions
-  if (state.activePositions.length > 0) {
-    text += `\n📈 *Açık Pozisyonlar*\n`;
-    for (const pos of state.activePositions) {
-      const emoji = pos.pnl >= 0 ? "🟢" : "🔴";
-      text += `${emoji} ${pos.coin} ${pos.side.toUpperCase()} | PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n`;
-    }
-  } else {
-    text += `\n_Açık pozisyon yok._`;
   }
 
   await send(text);
@@ -279,43 +358,62 @@ bot.onText(/\/help$/, async (msg) => {
 
   await send(
     `⛩ *Ichimoku Kinko Hyo — Komutlar*\n\n` +
-    `▶️ /start — Trading'i başlat\n` +
-    `⏹ /stop — Trading'i durdur\n` +
+    `▶️ /start_ichi — Ichimoku'yu başlat\n` +
+    `▶️ /start_virgen — Virgen'i başlat\n` +
+    `▶️ /start_all — İkisini de başlat\n` +
+    `⏹ /stop_all — Tümünü durdur\n` +
     `📊 /status — Durum + piyasa + pozisyon\n` +
     `⚙️ /config — Mevcut ayarlar\n` +
-    `💰 /pnl — Son trade sonuçları\n\n` +
+    `💰 /pnl — Son trade sonuçları (aktif ajanlar)\n\n` +
     `*Mod:*\n` +
     `🟢 /live — Canlı trade modu\n` +
     `🔸 /dry — Kuru test modu\n\n` +
     `*Ayarlar:*\n` +
     `\`/set leverage 3\`\n` +
     `\`/set size 50\`\n` +
-    `\`/set tp 2\`\n` +
-    `\`/set sl 1.5\`\n` +
-    `\`/set pairs ETH,BTC,SOL\``
+    `\`/set tp 2\``
   );
 });
 
 bot.onText(/\/pnl$/, async (msg) => {
   if (!isAuthorized(msg)) return;
 
-  const state = await getAccountState();
-  if (state.activePositions.length === 0) {
-    await send("📊 Açık pozisyon yok. Bakiye: $" + state.value.toFixed(2));
+  let text = `📊 *Açık Pozisyonlar (Aktif Ajanlar)*\n\n`;
+  let overallPnl = 0;
+  let hasPositions = false;
+
+  for (const key of Object.keys(agents)) {
+    const agent = agents[key];
+    if (!agent.active) continue;
+
+    try {
+      const state = await getAccountState(agent);
+      if (state.activePositions.length > 0) {
+        hasPositions = true;
+        text += `🤖 *${agent.name}*\n`;
+        let agentPnl = 0;
+        for (const pos of state.activePositions) {
+          const emoji = pos.pnl >= 0 ? "🟢" : "🔴";
+          text += `  └ ${emoji} ${pos.coin} ${pos.side.toUpperCase()}\n`;
+          text += `      Entry: $${pos.entryPrice.toFixed(2)} | Size: ${pos.size.toFixed(4)}\n`;
+          text += `      PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n`;
+          agentPnl += pos.pnl;
+        }
+        overallPnl += agentPnl;
+        text += `  *Alt Toplam PnL: $${agentPnl >= 0 ? "+" : ""}${agentPnl.toFixed(2)}*\n\n`;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!hasPositions) {
+    await send("📊 Aktif ajanlarda açık pozisyon yok.");
     return;
   }
 
-  let text = `📊 *Açık Pozisyonlar*\n\n`;
-  let totalPnl = 0;
-  for (const pos of state.activePositions) {
-    const emoji = pos.pnl >= 0 ? "🟢" : "🔴";
-    text += `${emoji} *${pos.coin}* ${pos.side.toUpperCase()}\n`;
-    text += `   Entry: $${pos.entryPrice.toFixed(2)} | Size: ${pos.size.toFixed(4)}\n`;
-    text += `   PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n\n`;
-    totalPnl += pos.pnl;
-  }
-  const emoji = totalPnl >= 0 ? "🟢" : "🔴";
-  text += `${emoji} *Toplam PnL: $${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}*`;
+  const emoji = overallPnl >= 0 ? "🟢" : "🔴";
+  text += `${emoji} *Genel Toplam PnL: $${overallPnl >= 0 ? "+" : ""}${overallPnl.toFixed(2)}*`;
 
   await send(text);
 });
@@ -329,126 +427,123 @@ let lastScanTime = 0;
 const lastSignalMap = new Map<string, number>();
 
 async function tradingTick(): Promise<void> {
-  if (!tradingActive || !loopRunning) return;
+  const activeAgents = Object.values(agents).filter(a => a.active);
+  if (activeAgents.length === 0 || !loopRunning) return;
 
-  try {
-    const state = await getAccountState();
-    const active = state.activePositions;
-    const activeCoins = new Set(active.map((p) => p.coin));
+  let anyStateChanged = false;
+  let hasAnyActivePositions = false;
 
-    let signalFound = false;
-    let scanLines: string[] = [];
-    let stateChanged = false;
+  for (const agent of activeAgents) {
+    try {
+      const state = await getAccountState(agent);
+      const activePositions = state.activePositions;
+      const activeCoins = new Set(activePositions.map((p) => p.coin));
+      
+      if (activePositions.length > 0) hasAnyActivePositions = true;
 
-    // 1. ── Scanning for all pairs ──
-    for (const pair of config.pairs) {
-      const data = await getMarketData(pair, config);
-      if (!data) continue;
+      // 1. ── Scanning for all pairs for THIS agent ──
+      for (const pair of config.pairs) {
+        const data = await getMarketData(pair, config);
+        if (!data) continue;
 
-      const signal = detectSignal(pair, data, config);
+        const signal = detectSignal(pair, data, config);
 
-      if (signal.side) {
-        // Enforce a 5-minute cooldown for signal notifications to prevent spam
-        const now = Date.now();
-        const lastSignalTime = lastSignalMap.get(pair) || 0;
-        if (now - lastSignalTime < 5 * 60 * 1000) {
-          continue; 
-        }
-
-        lastSignalMap.set(pair, now);
-        signalFound = true;
-        const totalSize = (config.sizeUsdc * config.leverage).toString();
-        const trendLabel = data.price > data.emaTrend ? "⬆️ UP" : "⬇️ DOWN";
-
-        await send(
-          `⚡ *SINYAL: ${signal.side.toUpperCase()} ${pair}*\n\n` +
-          `Fiyat: $${data.price.toFixed(2)}\n` +
-          `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
-          `Trend: ${trendLabel} (EMA200: ${data.emaTrend.toFixed(2)})\n` +
-          `Size: $${totalSize} (${config.sizeUsdc} USDC × ${config.leverage}x)`
-        );
-
-        if (activeCoins.has(pair)) {
-          await send(`⚠️ *${pair}* için zaten açık pozisyon var, yeni işleme girilmiyor.`);
-          continue; // Skip opening trade
-        }
-
-        if (state.value < config.sizeUsdc) {
-          await send(`⚠️ Yetersiz bakiye: $${state.value.toFixed(2)} < $${config.sizeUsdc}`);
-          continue;
-        }
-
-        if (!dryRunMode) {
-          try {
-            const jobId = await openPosition({
-              pair,
-              side: signal.side,
-              size: totalSize,
-              leverage: config.leverage,
-            });
-            await send(
-              `🟢 *AÇILDI: ${signal.side.toUpperCase()} ${pair}*\n` +
-              `Fiyat: $${data.price.toFixed(2)}\n` +
-              `ACP Job: #${jobId}`
-            );
-            stateChanged = true;
-          } catch (e: any) {
-            await send(`❌ Trade başarısız: ${e.message ?? e}`);
+        if (signal.side) {
+          // Enforce a 5-minute cooldown for signal notifications to prevent spam per pair
+          const now = Date.now();
+          const lastSignalTime = lastSignalMap.get(pair) || 0;
+          if (now - lastSignalTime < 5 * 60 * 1000) {
+            continue; 
           }
-        } else {
-          await send(`🔸 DRY RUN — trade açılmadı`);
-        }
-      }
-    }
 
-    // 2. ── Monitoring active positions ──
-    if (active.length > 0) {
-      for (const pos of active) {
-        if (shouldClose(pos.pnl, config)) {
-          const isTP = pos.pnl >= config.tpUsdc;
-          const emoji = isTP ? "🎯" : "🔴";
-          const reason = isTP ? "TP HIT" : "SL HIT";
+          lastSignalMap.set(pair, now);
+          const totalSize = (config.sizeUsdc * config.leverage).toString();
+          const trendLabel = data.price > data.emaTrend ? "⬆️ UP" : "⬇️ DOWN";
 
           await send(
-            `${emoji} *${reason} — ${pos.coin} ${pos.side.toUpperCase()}*\n` +
-            `PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n` +
-            `Kapatılıyor...`
+            `🤖 *${agent.name}* için ⚡ *SINYAL: ${signal.side.toUpperCase()} ${pair}*\n\n` +
+            `Fiyat: $${data.price.toFixed(2)}\n` +
+            `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
+            `Trend: ${trendLabel} (EMA200: ${data.emaTrend.toFixed(2)})\n` +
+            `Size: $${totalSize} (${config.sizeUsdc} USDC × ${config.leverage}x)`
           );
+
+          if (activeCoins.has(pair)) {
+            await send(`⚠️ *${agent.name}*: *${pair}* için zaten açık pozisyon var, atlanıyor.`);
+            continue;
+          }
+
+          if (state.value < config.sizeUsdc) {
+            await send(`⚠️ *${agent.name}*: Yetersiz bakiye: $${state.value.toFixed(2)} < $${config.sizeUsdc}`);
+            continue;
+          }
 
           if (!dryRunMode) {
             try {
-              const jobId = await closePosition({ 
-                pair: pos.coin,
-                side: pos.side as "long" | "short",
-                size: pos.size,
-                leverage: config.leverage
-              });
-              await send(`✅ Kapandı — ACP Job #${jobId}`);
-              stateChanged = true;
+              const jobId = await openPosition({
+                pair,
+                side: signal.side,
+                size: totalSize,
+                leverage: config.leverage,
+              }, agent);
+              await send(
+                `🟢 *[${agent.name}] AÇILDI: ${signal.side.toUpperCase()} ${pair}*\n` +
+                `Fiyat: $${data.price.toFixed(2)}\n` +
+                `ACP Job: #${jobId}`
+              );
+              anyStateChanged = true;
             } catch (e: any) {
-              await send(`❌ Kapatma başarısız: ${e.message ?? e}`);
+              await send(`❌ *${agent.name}* Trade başarısız: ${e.message ?? e}`);
             }
           } else {
-            await send(`🔸 DRY RUN — pozisyon kapatılmadı`);
+            await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
           }
         }
       }
-    }
 
-    // 4. Schedule next tick
-    if (tradingActive && loopRunning) {
-      // If we have active positions, tick faster to monitor TP/SL
-      // If we just opened/closed a position, tick fast to catch state updates
-      const nextInterval = (active.length > 0 || stateChanged) ? ACTIVE_INTERVAL_MS : SCAN_INTERVAL_MS;
-      loopTimer = setTimeout(tradingTick, nextInterval);
-    }
+      // 2. ── Monitoring active positions for THIS agent ──
+      if (activePositions.length > 0) {
+        for (const pos of activePositions) {
+          if (shouldClose(pos.pnl, config)) {
+            const isTP = pos.pnl >= config.tpUsdc;
+            const emoji = isTP ? "🎯" : "🔴";
+            const reason = isTP ? "TP HIT" : "SL HIT";
 
-  } catch (e: any) {
-    console.error(`[Trading Error] ${e.message}`);
-    await send(`⚠️ Hata: ${e.message ?? e}`);
-    if (tradingActive && loopRunning) {
-      loopTimer = setTimeout(tradingTick, 10_000);
+            await send(
+              `${emoji} *[${agent.name}] ${reason} — ${pos.coin} ${pos.side.toUpperCase()}*\n` +
+              `PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n` +
+              `Kapatılıyor...`
+            );
+
+            if (!dryRunMode) {
+              try {
+                const jobId = await closePosition({ 
+                  pair: pos.coin,
+                  side: pos.side as "long" | "short",
+                  size: pos.size,
+                  leverage: config.leverage
+                }, agent);
+                await send(`✅ *[${agent.name}]* Kapandı — ACP Job #${jobId}`);
+                anyStateChanged = true;
+              } catch (e: any) {
+                await send(`❌ *[${agent.name}]* Kapatma başarısız: ${e.message ?? e}`);
+              }
+            } else {
+              await send(`🔸 DRY RUN — *[${agent.name}]* pozisyon kapatılmadı`);
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Trading Error: ${agent.name}] ${e.message}`);
+      await send(`⚠️ *[${agent.name}]* Hata: ${e.message ?? e}`);
     }
+  }
+
+  // 4. Schedule next tick
+  if (loopRunning) {
+    const nextInterval = (hasAnyActivePositions || anyStateChanged) ? ACTIVE_INTERVAL_MS : SCAN_INTERVAL_MS;
+    loopTimer = setTimeout(tradingTick, nextInterval);
   }
 }
 
@@ -461,19 +556,18 @@ function startTradingLoop(): void {
 // Boot
 // ---------------------------------------------------------------------------
 
-console.log("⛩  Ichimoku Kinko Hyo — Telegram Bot başlatılıyor...");
+console.log("⛩  Multi-Agent Telegram Bot başlatılıyor...");
 send(
-  `⛩ *Ichimoku Kinko Hyo Bot Online*\n\n` +
+  `⛩ *Multi-Agent Trading Bot Online*\n\n` +
   `Mode: 🔸 DRY RUN (güvenli başlangıç)\n` +
   `Komutlar için /help yazın.\n` +
-  `Trading başlatmak için /start yazın.`
+  `Agent'ları başlatmak için /start_all, /start_ichi veya /start_virgen kullanın.`
 ).then(() => {
   console.log("✅ Telegram bağlantısı başarılı. Komut bekleniyor...");
 });
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
-  tradingActive = false;
   loopRunning = false;
   if (loopTimer) clearTimeout(loopTimer);
   await send("🛑 Bot kapatılıyor...");
@@ -482,7 +576,6 @@ process.on("SIGINT", async () => {
 });
 
 process.on("SIGTERM", async () => {
-  tradingActive = false;
   loopRunning = false;
   if (loopTimer) clearTimeout(loopTimer);
   await send("🛑 Bot kapatılıyor...");

@@ -7,13 +7,18 @@
  */
 
 import axios from "axios";
-import client from "../../src/lib/client.js";
-import { loadApiKey } from "../../src/lib/config.js";
 import { DEGEN_CLAW_PROVIDER } from "./constants.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export interface AgentConfig {
+  name: string;
+  apiKey: string;
+  hlWallet: string;
+  subaccount: string;
+}
 
 export interface OpenPositionParams {
   pair: string;
@@ -53,9 +58,27 @@ export interface AccountState {
 // Init
 // ---------------------------------------------------------------------------
 
-loadApiKey();
-
 const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
+
+function getAgentClient(agentRawKey: string) {
+  const client = axios.create({
+    baseURL: process.env.ACP_API_URL || "https://claw-api.virtuals.io",
+    headers: {
+      "x-api-key": agentRawKey,
+      "x-builder-code": process.env.ACP_BUILDER_CODE || "",
+    },
+  });
+  client.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.response) {
+        throw new Error(JSON.stringify(error.response.data));
+      }
+      throw error;
+    }
+  );
+  return client;
+}
 
 // ---------------------------------------------------------------------------
 // ACP Job helpers
@@ -63,10 +86,10 @@ const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
 
 /**
  * Open a perpetual position via Degen Claw ACP.
- * Equivalent to `acp job create <provider> perp_trade --requirements {...}`.
  */
 export async function openPosition(
   params: OpenPositionParams,
+  agent: AgentConfig
 ): Promise<number> {
   const body = {
     providerWalletAddress: DEGEN_CLAW_PROVIDER,
@@ -80,6 +103,7 @@ export async function openPosition(
     },
   };
 
+  const client = getAgentClient(agent.apiKey);
   const r = await client.post<{ data: { jobId: number } }>("/acp/jobs", body);
   return r.data.data.jobId;
 }
@@ -89,6 +113,7 @@ export async function openPosition(
  */
 export async function closePosition(
   params: ClosePositionParams,
+  agent: AgentConfig
 ): Promise<number> {
   const body = {
     providerWalletAddress: DEGEN_CLAW_PROVIDER,
@@ -102,6 +127,7 @@ export async function closePosition(
     },
   };
 
+  const client = getAgentClient(agent.apiKey);
   const r = await client.post<{ data: { jobId: number } }>("/acp/jobs", body);
   return r.data.data.jobId;
 }
@@ -111,6 +137,7 @@ export async function closePosition(
  */
 export async function modifyPosition(
   params: ModifyPositionParams,
+  agent: AgentConfig
 ): Promise<number> {
   const body = {
     providerWalletAddress: DEGEN_CLAW_PROVIDER,
@@ -122,6 +149,7 @@ export async function modifyPosition(
     },
   };
 
+  const client = getAgentClient(agent.apiKey);
   const r = await client.post<{ data: { jobId: number } }>("/acp/jobs", body);
   return r.data.data.jobId;
 }
@@ -132,40 +160,17 @@ export async function modifyPosition(
 
 /**
  * Query account / position state from Hyperliquid.
- * Uses the subaccount address from env, or falls back to the wallet used
- * for ACP authentication.
+ * Uses the subaccount address assigned to the agent configuration.
  */
 export async function getAccountState(
-  walletAddress?: string,
+  agent: AgentConfig,
 ): Promise<AccountState> {
-  // Priority: SUBACCOUNT_ADDRESS (HL subaccount) → HL_WALLET_ADDRESS → config.json
-  const hlAddr = walletAddress ||
-    process.env.SUBACCOUNT_ADDRESS ||
-    process.env.HL_WALLET_ADDRESS;
+  const queryAddr = agent.subaccount || agent.hlWallet;
+  const displayAddr = agent.hlWallet || "unknown";
 
-  // For display, use the agent wallet (not subaccount)
-  let displayAddr = process.env.HL_WALLET_ADDRESS || "unknown";
-
-  // Fall back to config.json
-  let queryAddr = hlAddr;
   if (!queryAddr) {
-    try {
-      const fs = await import("fs");
-      const path = await import("path");
-      const cfgPath = path.resolve(
-        import.meta.dirname ?? ".",
-        "../../config.json",
-      );
-      const cfgJson = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
-      const active = cfgJson.agents?.find((a: any) => a.active);
-      if (active?.walletAddress) {
-        queryAddr = active.walletAddress;
-        displayAddr = active.walletAddress;
-      }
-    } catch {}
+    throw new Error(`Missing SUBACCOUNT_ADDRESS or HL_WALLET_ADDRESS for agent ${agent.name}.`);
   }
-
-  if (!queryAddr) queryAddr = "unknown";
 
   try {
     const payload = { type: "webData2", user: queryAddr };
