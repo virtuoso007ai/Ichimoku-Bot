@@ -88,6 +88,16 @@ if (process.env.VIRGEN_LITE_AGENT_API_KEY) {
   };
 }
 
+if (process.env.RAICHU_LITE_AGENT_API_KEY) {
+  agents["raichu"] = {
+    name: "Super Saiyan Raichu",
+    apiKey: process.env.RAICHU_LITE_AGENT_API_KEY,
+    hlWallet: process.env.RAICHU_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.RAICHU_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
 // Fallback logic for backward compatibility
 if (Object.keys(agents).length === 0 && process.env.LITE_AGENT_API_KEY) {
   agents["default"] = {
@@ -158,7 +168,7 @@ function isAuthorized(msg: TgMessage): boolean {
 // Telegram Commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/(start_ichi|start_virgen|start_all)$/, async (msg, match) => {
+bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -182,6 +192,15 @@ bot.onText(/\/(start_ichi|start_virgen|start_all)$/, async (msg, match) => {
     }
   }
 
+  if (cmd === "start_raichu" || cmd === "start_all") {
+    if (agents["raichu"]) {
+      agents["raichu"].active = true;
+      activated.push("Super Saiyan Raichu");
+    } else {
+      await send("⚠️ Raichu kimlik bilgileri (.env) bulunamadı.");
+    }
+  }
+
   if (activated.length === 0) return;
 
   const modeText = dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
@@ -200,7 +219,7 @@ bot.onText(/\/(start_ichi|start_virgen|start_all)$/, async (msg, match) => {
   }
 });
 
-bot.onText(/\/(stop_ichi|stop_virgen|stop_all)$/, async (msg, match) => {
+bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -217,6 +236,13 @@ bot.onText(/\/(stop_ichi|stop_virgen|stop_all)$/, async (msg, match) => {
     if (agents["virgen"]) {
       agents["virgen"].active = false;
       deactivated.push("Virgen Capital");
+    }
+  }
+
+  if (cmd === "stop_raichu" || cmd === "stop_all") {
+    if (agents["raichu"]) {
+      agents["raichu"].active = false;
+      deactivated.push("Super Saiyan Raichu");
     }
   }
 
@@ -360,6 +386,7 @@ bot.onText(/\/help$/, async (msg) => {
     `⛩ *Ichimoku Kinko Hyo — Komutlar*\n\n` +
     `▶️ \\/start\\_ichi — Ichimoku'yu başlat\n` +
     `▶️ \\/start\\_virgen — Virgen'i başlat\n` +
+    `▶️ \\/start\\_raichu — Raichu'yu başlat\n` +
     `▶️ \\/start\\_all — İkisini de başlat\n` +
     `⏹ \\/stop\\_all — Tümünü durdur\n` +
     `📊 /status — Durum + piyasa + pozisyon\n` +
@@ -584,7 +611,7 @@ send(
   `⛩ *Multi-Agent Trading Bot Online*\n\n` +
   `Mode: 🔸 DRY RUN (güvenli başlangıç)\n` +
   `Komutlar için /help yazın.\n` +
-  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi veya \\/start\\_virgen kullanın.`
+  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi, \\/start\\_virgen veya \\/start\\_raichu kullanın.`
 ).then(() => {
   console.log("✅ Telegram bağlantısı başarılı. Komut bekleniyor...");
 });
