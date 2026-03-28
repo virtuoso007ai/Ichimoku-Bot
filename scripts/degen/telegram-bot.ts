@@ -423,12 +423,35 @@ bot.onText(/\/pnl$/, async (msg) => {
 // ---------------------------------------------------------------------------
 
 let lastScanTime = 0;
+let lastReportTime = Date.now();
 
 const lastSignalMap = new Map<string, number>();
 
 async function tradingTick(): Promise<void> {
   const activeAgents = Object.values(agents).filter(a => a.active);
   if (activeAgents.length === 0 || !loopRunning) return;
+
+  const now = Date.now();
+  // 5 dakikada bir "hala çalışıyorum" raporu gönder
+  if (now - lastReportTime >= 5 * 60 * 1000) {
+    lastReportTime = now;
+    let report = `⏱ *Sistem Aktif (5 Dk Tarama Özeti)*\n\n`;
+    report += `🤖 Ajanlar: ${activeAgents.map(a => a.name).join(", ")}\n`;
+    report += `📊 Taranan Çiftler:\n`;
+    for (const pair of config.pairs) {
+      try {
+        const data = await getMarketData(pair, config);
+        if (data) {
+          const trend = data.price > data.emaTrend ? "⬆️" : "⬇️";
+          report += `  • ${pair}: $${data.price.toFixed(2)} | Trend: ${trend}\n`;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    report += `\n_Piyasayı izlemeye devam ediyorum... 🔍_`;
+    await send(report);
+  }
 
   let anyStateChanged = false;
   let hasAnyActivePositions = false;
