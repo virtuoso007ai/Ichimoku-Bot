@@ -358,10 +358,10 @@ bot.onText(/\/help$/, async (msg) => {
 
   await send(
     `⛩ *Ichimoku Kinko Hyo — Komutlar*\n\n` +
-    `▶️ /start_ichi — Ichimoku'yu başlat\n` +
-    `▶️ /start_virgen — Virgen'i başlat\n` +
-    `▶️ /start_all — İkisini de başlat\n` +
-    `⏹ /stop_all — Tümünü durdur\n` +
+    `▶️ \\/start\\_ichi — Ichimoku'yu başlat\n` +
+    `▶️ \\/start\\_virgen — Virgen'i başlat\n` +
+    `▶️ \\/start\\_all — İkisini de başlat\n` +
+    `⏹ \\/stop\\_all — Tümünü durdur\n` +
     `📊 /status — Durum + piyasa + pozisyon\n` +
     `⚙️ /config — Mevcut ayarlar\n` +
     `💰 /pnl — Son trade sonuçları (aktif ajanlar)\n\n` +
@@ -561,7 +561,7 @@ send(
   `⛩ *Multi-Agent Trading Bot Online*\n\n` +
   `Mode: 🔸 DRY RUN (güvenli başlangıç)\n` +
   `Komutlar için /help yazın.\n` +
-  `Agent'ları başlatmak için /start_all, /start_ichi veya /start_virgen kullanın.`
+  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi veya \\/start\\_virgen kullanın.`
 ).then(() => {
   console.log("✅ Telegram bağlantısı başarılı. Komut bekleniyor...");
 });
