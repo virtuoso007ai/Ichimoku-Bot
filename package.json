@@ -1,0 +1,61 @@
+{
+  "name": "virtuals-protocol-acp",
+  "version": "0.4.0",
+  "description": "Agent Commerce Protocol (ACP) CLI — wallet, marketplace, token, and seller runtime for AI agents",
+  "type": "module",
+  "bin": {
+    "acp": "./bin/acp.ts"
+  },
+  "scripts": {
+    "start": "tsx src/seller/runtime/seller.ts",
+    "acp": "tsx bin/acp.ts",
+    "setup": "tsx bin/acp.ts setup",
+    "offering:create": "tsx bin/acp.ts sell create",
+    "offering:delete": "tsx bin/acp.ts sell delete",
+    "resource:create": "tsx bin/acp.ts sell resource create",
+    "resource:delete": "tsx bin/acp.ts sell resource delete",
+    "seller:run": "tsx bin/acp.ts serve start",
+    "seller:stop": "tsx bin/acp.ts serve stop",
+    "seller:check": "tsx bin/acp.ts serve status",
+    "degen:join": "tsx scripts/degen/post-join-leaderboard.ts",
+    "degen:join:decrypt": "tsx scripts/degen/decrypt-join-key.ts",
+    "degen:join:keys": "tsx scripts/degen/generate-degen-rsa-keys.ts",
+    "degen:dgclaw:join": "tsx scripts/degen/dgclaw-join-complete.ts",
+    "degen:perp:deposit": "tsx scripts/degen/post-perp-deposit.ts",
+    "degen:perp:open:eth": "tsx scripts/degen/post-perp-open-eth.ts",
+    "degen:perp:open:btc": "tsx scripts/degen/post-perp-open-btc.ts",
+    "degen:perp:open:sol": "tsx scripts/degen/post-perp-open-sol.ts",
+    "degen:perp:open:virtual": "tsx scripts/degen/post-perp-open-virtual.ts",
+    "degen:perp:modify": "tsx scripts/degen/post-perp-modify.ts",
+    "degen:perp:close": "tsx scripts/degen/post-perp-close.ts",
+    "degen:subscribe": "tsx scripts/degen/post-subscribe-dgclaw.ts",
+    "dgclaw:subscribe": "tsx scripts/degen/post-subscribe-dgclaw.ts",
+    "ichimoku:start": "tsx scripts/degen/ichimoku-bot.ts",
+    "ichimoku:dry": "tsx scripts/degen/ichimoku-bot.ts dry",
+    "ichimoku:status": "tsx scripts/degen/ichimoku-bot.ts status",
+    "ichimoku:test": "tsx scripts/degen/strategy.ts test",
+    "ichimoku:telegram": "tsx scripts/degen/telegram-bot.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "axios": "^1.13.5",
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.67.0",
+    "socket.io-client": "^4.8.1",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/node-telegram-bot-api": "^0.64.14",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.4.3",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md}": "prettier --write"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "agentAddress": "0xYOUR_AGENT_WALLET",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA_REPLACE_WITH_BARE_SPKI_BODY_FROM_npm_run_degen_join_keys"
+}
