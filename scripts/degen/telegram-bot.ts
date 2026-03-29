@@ -511,125 +511,133 @@ async function tradingTick(): Promise<void> {
   let anyStateChanged = false;
   let hasAnyActivePositions = false;
 
+  // 1. Her ajanın Hyperliquid hesabı bakiyesini paralele yakın bir hızda çekiyoruz
+  const agentStates = new Map<string, { state: any, activeCoins: Set<string> }>();
   for (const agent of activeAgents) {
     try {
       const state = await getAccountState(agent);
-      const activePositions = state.activePositions;
-      const activeCoins = new Set(activePositions.map((p) => p.coin));
-      
-      if (activePositions.length > 0) hasAnyActivePositions = true;
+      const activeCoins = new Set(state.activePositions.map((p: any) => p.coin));
+      if (state.activePositions.length > 0) hasAnyActivePositions = true;
+      agentStates.set(agent.name, { state, activeCoins });
+    } catch (e: any) {
+      console.error(`[State Error: ${agent.name}] ${e.message}`);
+      await send(`⚠️ *[${agent.name}]* Bakiye okuma hatası: ${e.message ?? e}`);
+    }
+  }
 
-      // 1. ── Scanning for all pairs for THIS agent ──
-      for (const pair of config.pairs) {
-        const data = await getMarketData(pair, config);
-        if (!data) continue;
+  // 2. Her bir parite için market verilerini (getMarketData) YALNIZCA BİR KEZ tarıyoruz
+  for (const pair of config.pairs) {
+    const now = Date.now();
+    const lastSignalTime = lastSignalMap.get(pair) || 0;
+    
+    // Cooldown aktifse (son 5 dk'da sinyal verildiyse) API'yi yormadan geç
+    if (now - lastSignalTime < 5 * 60 * 1000) {
+      continue; 
+    }
 
-        const signal = detectSignal(pair, data, config);
+    try {
+      const data = await getMarketData(pair, config);
+      if (!data) continue;
 
-        if (signal.side) {
-          // Enforce a 5-minute cooldown for signal notifications to prevent spam per pair
-          const now = Date.now();
-          const lastSignalTime = lastSignalMap.get(pair) || 0;
-          if (now - lastSignalTime < 5 * 60 * 1000) {
-            continue; 
-          }
+      const signal = detectSignal(pair, data, config);
+      if (signal.side) {
+        lastSignalMap.set(pair, now);
+        const totalSize = (config.sizeUsdc * config.leverage).toString();
+        const trendLabel = data.price > data.emaTrend ? "⬆️ UP" : "⬇️ DOWN";
+        
+        // Hangi ajanlar bu işleme girmeye müsait? (Pozisyonu olmayan ve bakiyesi yeten)
+        const eligibleAgents = [];
+        for (const agent of activeAgents) {
+           const aData = agentStates.get(agent.name);
+           if (!aData) continue;
+           if (aData.activeCoins.has(pair)) continue;
+           if (aData.state.value < config.sizeUsdc) continue;
+           eligibleAgents.push(agent);
+        }
 
-          lastSignalMap.set(pair, now);
-          const totalSize = (config.sizeUsdc * config.leverage).toString();
-          const trendLabel = data.price > data.emaTrend ? "⬆️ UP" : "⬇️ DOWN";
-
+        if (eligibleAgents.length > 0) {
+          const agentNames = eligibleAgents.map(a => a.name).join(", ");
           await send(
-            `🤖 *${agent.name}* için ⚡ *SINYAL: ${signal.side.toUpperCase()} ${pair}*\n\n` +
+            `🤖 *ORTAK SİNYAL: ${signal.side.toUpperCase()} ${pair}*\n` +
+            `Giriş Yapan Ajanlar: *${agentNames}*\n\n` +
             `Fiyat: $${data.price.toFixed(2)}\n` +
             `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
             `Trend: ${trendLabel} (EMA200: ${data.emaTrend.toFixed(2)})\n` +
-            `Size: $${totalSize} (${config.sizeUsdc} USDC × ${config.leverage}x)`
+            `Size: $${totalSize} (Kişi Başına)`
           );
 
-          if (activeCoins.has(pair)) {
-            await send(`⚠️ *${agent.name}*: *${pair}* için zaten açık pozisyon var, atlanıyor.`);
-            continue;
-          }
-
-          if (state.value < config.sizeUsdc) {
-            await send(`⚠️ *${agent.name}*: Yetersiz bakiye: $${state.value.toFixed(2)} < $${config.sizeUsdc}`);
-            continue;
-          }
-
-          if (!dryRunMode) {
-            try {
-              const jobId = await openPosition({
-                pair,
-                side: signal.side,
-                size: totalSize,
-                leverage: config.leverage,
-              }, agent);
-              await send(
-                `🟢 *[${agent.name}] AÇILDI: ${signal.side.toUpperCase()} ${pair}*\n` +
-                `Fiyat: $${data.price.toFixed(2)}\n` +
-                `ACP Job: #${jobId}`
-              );
-              anyStateChanged = true;
-            } catch (e: any) {
-              await send(`❌ *${agent.name}* Trade başarısız: ${e.message ?? e}`);
-            }
-          } else {
-            await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
-          }
-        }
-      }
-
-      // 2. ── Monitoring active positions for THIS agent ──
-      if (activePositions.length > 0) {
-        for (const pos of activePositions) {
-          if (shouldClose(pos.pnl, config)) {
-            const posKey = `${agent.name}:${pos.coin}:${pos.side}`;
-            const pendingTime = pendingCloseMap.get(posKey) || 0;
-            
-            // Eğer son 5 dakika içinde kapatma emri gönderdiysek, Degen Claw onayını bekle ve spam atma
-            if (Date.now() - pendingTime < 5 * 60 * 1000) {
-              continue;
-            }
-            
-            pendingCloseMap.set(posKey, Date.now());
-
-            const isTP = pos.pnl >= config.tpUsdc;
-            const emoji = isTP ? "🎯" : "🔴";
-            const reason = isTP ? "TP HIT" : "SL HIT";
-
-            await send(
-              `${emoji} *[${agent.name}] ${reason} — ${pos.coin} ${pos.side.toUpperCase()}*\n` +
-              `PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n` +
-              `Kapatılıyor... (ACP Onayı Bekleniyor)`
-            );
-
+          // Uygun olan tüm ajanlar için işleme gir
+          for (const agent of eligibleAgents) {
             if (!dryRunMode) {
               try {
-                const jobId = await closePosition({ 
-                  pair: pos.coin,
-                  side: pos.side as "long" | "short",
-                  size: pos.size,
-                  leverage: config.leverage
+                const jobId = await openPosition({
+                  pair,
+                  side: signal.side,
+                  size: totalSize,
+                  leverage: config.leverage,
                 }, agent);
-                await send(`✅ *[${agent.name}]* Kapatma İsteği İletildi — ACP Job #${jobId}`);
+                await send(`🟢 *[${agent.name}]* AÇILDI — ACP Job: #${jobId}`);
                 anyStateChanged = true;
               } catch (e: any) {
-                // Hata alırsak spam yapmaması için cooldown'ı kısa tutalım (30 sn)
-                pendingCloseMap.set(posKey, Date.now() - 4.5 * 60 * 1000); 
-                await send(`❌ *[${agent.name}]* Kapatma başarısız: ${e.message ?? e}`);
+                await send(`❌ *[${agent.name}]* Trade başarısız: ${e.message ?? e}`);
               }
             } else {
-              await send(`🔸 DRY RUN — *[${agent.name}]* pozisyon kapatılmadı`);
+              await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
             }
           }
         }
       }
     } catch (e: any) {
-      console.error(`[Trading Error: ${agent.name}] ${e.message}`);
-      await send(`⚠️ *[${agent.name}]* Hata: ${e.message ?? e}`);
+      console.error(`[Market Data Error: ${pair}]`, e.message);
     }
   }
 
+  // 3. Her ajanın aktif pozisyonlarını denetle ve gerekirse kârı/zararı kapat
+  for (const agent of activeAgents) {
+    const aData = agentStates.get(agent.name);
+    if (!aData || aData.state.activePositions.length === 0) continue;
+
+    for (const pos of aData.state.activePositions) {
+      if (shouldClose(pos.pnl, config)) {
+        const posKey = `${agent.name}:${pos.coin}:${pos.side}`;
+        const pendingTime = pendingCloseMap.get(posKey) || 0;
+        
+        if (Date.now() - pendingTime < 5 * 60 * 1000) {
+          continue;
+        }
+        
+        pendingCloseMap.set(posKey, Date.now());
+
+        const isTP = pos.pnl >= config.tpUsdc;
+        const emoji = isTP ? "🎯" : "🔴";
+        const reason = isTP ? "TP HIT" : "SL HIT";
+
+        await send(
+          `${emoji} *[${agent.name}] ${reason} — ${pos.coin} ${pos.side.toUpperCase()}*\n` +
+          `PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n` +
+          `Kapatılıyor... (ACP Onayı Bekleniyor)`
+        );
+
+        if (!dryRunMode) {
+          try {
+            const jobId = await closePosition({ 
+              pair: pos.coin,
+              side: pos.side as "long" | "short",
+              size: pos.size,
+              leverage: config.leverage
+            }, agent);
+            await send(`✅ *[${agent.name}]* Kapatma İsteği İletildi — ACP Job #${jobId}`);
+            anyStateChanged = true;
+          } catch (e: any) {
+            pendingCloseMap.set(posKey, Date.now() - 4.5 * 60 * 1000); 
+            await send(`❌ *[${agent.name}]* Kapatma başarısız: ${e.message ?? e}`);
+          }
+        } else {
+          await send(`🔸 DRY RUN — *[${agent.name}]* pozisyon kapatılmadı`);
+        }
+      }
+    }
+  }
   // 4. Schedule next tick
   if (loopRunning) {
     const nextInterval = (hasAnyActivePositions || anyStateChanged) ? ACTIVE_INTERVAL_MS : SCAN_INTERVAL_MS;
