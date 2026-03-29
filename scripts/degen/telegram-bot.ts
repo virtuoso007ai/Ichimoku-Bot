@@ -453,6 +453,7 @@ let lastScanTime = 0;
 let lastReportTime = Date.now();
 
 const lastSignalMap = new Map<string, number>();
+const pendingCloseMap = new Map<string, number>();
 
 async function tradingTick(): Promise<void> {
   const activeAgents = Object.values(agents).filter(a => a.active);
@@ -555,6 +556,16 @@ async function tradingTick(): Promise<void> {
       if (activePositions.length > 0) {
         for (const pos of activePositions) {
           if (shouldClose(pos.pnl, config)) {
+            const posKey = `${agent.name}:${pos.coin}:${pos.side}`;
+            const pendingTime = pendingCloseMap.get(posKey) || 0;
+            
+            // Eğer son 5 dakika içinde kapatma emri gönderdiysek, Degen Claw onayını bekle ve spam atma
+            if (Date.now() - pendingTime < 5 * 60 * 1000) {
+              continue;
+            }
+            
+            pendingCloseMap.set(posKey, Date.now());
+
             const isTP = pos.pnl >= config.tpUsdc;
             const emoji = isTP ? "🎯" : "🔴";
             const reason = isTP ? "TP HIT" : "SL HIT";
@@ -562,7 +573,7 @@ async function tradingTick(): Promise<void> {
             await send(
               `${emoji} *[${agent.name}] ${reason} — ${pos.coin} ${pos.side.toUpperCase()}*\n` +
               `PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n` +
-              `Kapatılıyor...`
+              `Kapatılıyor... (ACP Onayı Bekleniyor)`
             );
 
             if (!dryRunMode) {
@@ -573,9 +584,11 @@ async function tradingTick(): Promise<void> {
                   size: pos.size,
                   leverage: config.leverage
                 }, agent);
-                await send(`✅ *[${agent.name}]* Kapandı — ACP Job #${jobId}`);
+                await send(`✅ *[${agent.name}]* Kapatma İsteği İletildi — ACP Job #${jobId}`);
                 anyStateChanged = true;
               } catch (e: any) {
+                // Hata alırsak spam yapmaması için cooldown'ı kısa tutalım (30 sn)
+                pendingCloseMap.set(posKey, Date.now() - 4.5 * 60 * 1000); 
                 await send(`❌ *[${agent.name}]* Kapatma başarısız: ${e.message ?? e}`);
               }
             } else {
