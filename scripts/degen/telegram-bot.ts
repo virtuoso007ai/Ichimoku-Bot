@@ -618,63 +618,64 @@ async function tradingTick(): Promise<void> {
 
       const signal = detectSignal(pair, data, config);
       if (signal.side) {
-        lastSignalMap.set(pair, now);
         const totalSize = (config.sizeUsdc * config.leverage).toString();
         const trendLabel = data.price > data.emaTrend ? "⬆️ UP" : "⬇️ DOWN";
-        
+
         // Hangi ajanlar bu işleme girmeye müsait? (Pozisyonu olmayan ve bakiyesi yeten)
         const eligibleAgents = [];
+        const blockedAgents = [];
         for (const agent of activeAgents) {
-           const aData = agentStates.get(agent.name);
-           if (!aData) continue;
-           if (aData.activeCoins.has(pair)) continue;
-           if (aData.state.value < config.sizeUsdc) continue;
-           eligibleAgents.push(agent);
+          const aData = agentStates.get(agent.name);
+          if (!aData) continue;
+          const openKey = `${agent.name}:${pair}`;
+          const lastOpenTime = pendingOpenMap.get(openKey) || 0;
+          const recentlyOpened = Date.now() - lastOpenTime < 10 * 60 * 1000;
+          if (aData.activeCoins.has(pair) || recentlyOpened) {
+            blockedAgents.push(agent.name);
+          } else if (aData.state.value < config.sizeUsdc) {
+            blockedAgents.push(`${agent.name}(bakiye yetersiz)`);
+          } else {
+            eligibleAgents.push(agent);
+          }
         }
 
-        if (eligibleAgents.length > 0) {
-          const agentNames = eligibleAgents.map(a => a.name).join(", ");
-          await send(
-            `🤖 *ORTAK SİNYAL: ${signal.side.toUpperCase()} ${pair}*\n` +
-            `Giriş Yapan Ajanlar: *${agentNames}*\n\n` +
-            `Fiyat: $${data.price.toFixed(2)}\n` +
-            `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
-            `Trend: ${trendLabel} (EMA200: ${data.emaTrend.toFixed(2)})\n` +
-            `Size: $${totalSize} (Kişi Başına)`
-          );
+        // Sinyal bildirimi her zaman gönder (uygun ajan olsun ya da olmasın)
+        lastSignalMap.set(pair, now); // cooldown'ı artık set ettikten sonra başlat
+        const agentInfo = eligibleAgents.length > 0
+          ? `Giriş: *${eligibleAgents.map(a => a.name).join(", ")}*`
+          : `⚠️ Tüm ajanlar bu pair'de zaten pozisyonda veya bakiye yetersiz`;
+        await send(
+          `⚡ *SİNYAL: ${signal.side.toUpperCase()} ${pair}*\n` +
+          `${agentInfo}\n\n` +
+          `Fiyat: $${data.price.toFixed(2)}\n` +
+          `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
+          `Trend: ${trendLabel} (EMA200: ${data.emaTrend.toFixed(2)})\n` +
+          `Size: $${totalSize} (Kişi Başına)`
+        );
 
-          // Uygun olan tüm ajanlar için işleme gir (çift giriş kontrolü)
-          for (const agent of eligibleAgents) {
-            const openKey = `${agent.name}:${pair}`;
-            const lastOpenTime = pendingOpenMap.get(openKey) || 0;
+        // Uygun olan tüm ajanlar için işleme gir (çift giriş kontrolü)
+        for (const agent of eligibleAgents) {
+          const openKey = `${agent.name}:${pair}`;
+          // Kilidi hemen set et (job cevabı gelmeden önce de), çift ateşlemeyi önle
+          pendingOpenMap.set(openKey, Date.now());
 
-            // Aynı agent + pair için son 10 dakikada zaten açma isteği gönderdik mi?
-            if (Date.now() - lastOpenTime < 10 * 60 * 1000) {
-              console.log(`[DUPLICATE BLOCKED] ${agent.name} / ${pair} — son ${Math.round((Date.now() - lastOpenTime) / 1000)} sn önce açıldı`);
-              continue;
+          if (!dryRunMode) {
+            try {
+              const jobId = await openPosition({
+                pair,
+                side: signal.side,
+                size: totalSize,
+                leverage: config.leverage,
+              }, agent);
+              await send(`🟢 *[${agent.name}]* AÇILDI — ACP Job: #${jobId}`);
+              anyStateChanged = true;
+            } catch (e: any) {
+              // Hata alırsak kilidi geri al ki bir sonraki tick'te tekrar deneyebilelim
+              pendingOpenMap.delete(openKey);
+              await send(`❌ *[${agent.name}]* Trade başarısız: ${e.message ?? e}`);
             }
-
-            // Kilidi hemen set et (job cevabı gelmeden önce de), çift ateşlemeyi önle
-            pendingOpenMap.set(openKey, Date.now());
-
-            if (!dryRunMode) {
-              try {
-                const jobId = await openPosition({
-                  pair,
-                  side: signal.side,
-                  size: totalSize,
-                  leverage: config.leverage,
-                }, agent);
-                await send(`🟢 *[${agent.name}]* AÇILDI — ACP Job: #${jobId}`);
-                anyStateChanged = true;
-              } catch (e: any) {
-                // Hata alırsak kilidi geri al ki bir sonraki tick'te tekrar deneyebilelim
-                pendingOpenMap.delete(openKey);
-                await send(`❌ *[${agent.name}]* Trade başarısız: ${e.message ?? e}`);
-              }
-            } else {
-              await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
-            }
+          } else {
+            await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
           }
         }
       }
