@@ -108,6 +108,16 @@ if (process.env.WELLES_LITE_AGENT_API_KEY) {
   };
 }
 
+if (process.env.SQUIRTLE_LITE_AGENT_API_KEY) {
+  agents["squirtle"] = {
+    name: "Squirtle Squad",
+    apiKey: process.env.SQUIRTLE_LITE_AGENT_API_KEY,
+    hlWallet: process.env.SQUIRTLE_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.SQUIRTLE_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
 // Fallback logic for backward compatibility
 if (Object.keys(agents).length === 0 && process.env.LITE_AGENT_API_KEY) {
   agents["default"] = {
@@ -178,7 +188,7 @@ function isAuthorized(msg: TgMessage): boolean {
 // Telegram Commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_all)$/, async (msg, match) => {
+bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_squirtle|start_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -220,6 +230,15 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_all)$/, a
     }
   }
 
+  if (cmd === "start_squirtle" || cmd === "start_all") {
+    if (agents["squirtle"]) {
+      agents["squirtle"].active = true;
+      activated.push("Squirtle Squad");
+    } else {
+      await send("⚠️ Squirtle kimlik bilgileri (.env) bulunamadı.");
+    }
+  }
+
   if (activated.length === 0) return;
 
   const modeText = dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
@@ -238,7 +257,7 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_all)$/, a
   }
 });
 
-bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_all)$/, async (msg, match) => {
+bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_squirtle|stop_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -269,6 +288,13 @@ bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_all)$/, async 
     if (agents["welles"]) {
       agents["welles"].active = false;
       deactivated.push("Welles Wilder");
+    }
+  }
+
+  if (cmd === "stop_squirtle" || cmd === "stop_all") {
+    if (agents["squirtle"]) {
+      agents["squirtle"].active = false;
+      deactivated.push("Squirtle Squad");
     }
   }
 
@@ -414,6 +440,7 @@ bot.onText(/\/help$/, async (msg) => {
     `▶️ \\/start\\_virgen — Virgen'i başlat\n` +
     `▶️ \\/start\\_raichu — Raichu'yu başlat\n` +
     `▶️ \\/start\\_welles — Welles'i başlat\n` +
+    `▶️ \\/start\\_squirtle — Squirtle'ı başlat\n` +
     `▶️ \\/start\\_all — İkisini de başlat\n` +
     `⏹ \\/stop\\_all — Tümünü durdur\n` +
     `📊 /status — Durum + piyasa + pozisyon\n` +
@@ -659,7 +686,7 @@ send(
   `⛩ *Multi-Agent Trading Bot Online*\n\n` +
   `Mode: 🔸 DRY RUN (güvenli başlangıç)\n` +
   `Komutlar için /help yazın.\n` +
-  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi, \\/start\\_virgen, \\/start\\_raichu veya \\/start\\_welles kullanın.`
+  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi, \\/start\\_virgen, \\/start\\_raichu, \\/start\\_welles veya \\/start\\_squirtle kullanın.`
 ).then(() => {
   console.log("✅ Telegram bağlantısı başarılı. Komut bekleniyor...");
 });
