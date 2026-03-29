@@ -46,6 +46,8 @@ export interface ActivePosition {
   size: number;
   side: string;
   entryPrice: number;
+  markPrice: number;
+  leverage: number;
 }
 
 export interface AccountState {
@@ -191,12 +193,22 @@ export async function getAccountState(
       const entry = p.position ?? {};
       const szi = parseFloat(entry.szi ?? "0");
       if (Math.abs(szi) > 0) {
+        // markPrice: notional / size (|szi|)
+        const notional = parseFloat(entry.positionValue ?? "0");
+        const absSize = Math.abs(szi);
+        const entryPx = parseFloat(entry.entryPx ?? "0");
+        const lev = parseFloat(entry.leverage?.value ?? entry.leverage ?? "0");
+        // markPx from HL is in entry.returnOnEquity or we derive: markPrice = entryPx + pnl / absSize
+        const upnl = parseFloat(entry.unrealizedPnl ?? "0");
+        const markPx = absSize > 0 ? entryPx + upnl / absSize : entryPx;
         activePositions.push({
           coin: entry.coin ?? "?",
-          pnl: parseFloat(entry.unrealizedPnl ?? "0"),
-          size: Math.abs(szi),
+          pnl: upnl,
+          size: absSize,
           side: szi > 0 ? "long" : "short",
-          entryPrice: parseFloat(entry.entryPx ?? "0"),
+          entryPrice: entryPx,
+          markPrice: markPx,
+          leverage: lev || 5,
         });
       }
     }

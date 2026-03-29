@@ -118,6 +118,16 @@ if (process.env.SQUIRTLE_LITE_AGENT_API_KEY) {
   };
 }
 
+if (process.env.FRIDAY_LITE_AGENT_API_KEY) {
+  agents["friday"] = {
+    name: "FRIDAY",
+    apiKey: process.env.FRIDAY_LITE_AGENT_API_KEY,
+    hlWallet: process.env.FRIDAY_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.FRIDAY_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
 // Fallback logic for backward compatibility
 if (Object.keys(agents).length === 0 && process.env.LITE_AGENT_API_KEY) {
   agents["default"] = {
@@ -188,7 +198,7 @@ function isAuthorized(msg: TgMessage): boolean {
 // Telegram Commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_squirtle|start_all)$/, async (msg, match) => {
+bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_squirtle|start_friday|start_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -239,6 +249,15 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_squirtle|
     }
   }
 
+  if (cmd === "start_friday" || cmd === "start_all") {
+    if (agents["friday"]) {
+      agents["friday"].active = true;
+      activated.push("FRIDAY");
+    } else {
+      await send("⚠️ Friday kimlik bilgileri (.env) bulunamadı.");
+    }
+  }
+
   if (activated.length === 0) return;
 
   const modeText = dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
@@ -257,7 +276,7 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_squirtle|
   }
 });
 
-bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_squirtle|stop_all)$/, async (msg, match) => {
+bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_squirtle|stop_friday|stop_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -295,6 +314,13 @@ bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_squirtle|stop_
     if (agents["squirtle"]) {
       agents["squirtle"].active = false;
       deactivated.push("Squirtle Squad");
+    }
+  }
+
+  if (cmd === "stop_friday" || cmd === "stop_all") {
+    if (agents["friday"]) {
+      agents["friday"].active = false;
+      deactivated.push("FRIDAY");
     }
   }
 
@@ -435,31 +461,34 @@ bot.onText(/\/help$/, async (msg) => {
   if (!isAuthorized(msg)) return;
 
   await send(
-    `⛩ *Ichimoku Kinko Hyo — Komutlar*\n\n` +
-    `▶️ \\/start\\_ichi — Ichimoku'yu başlat\n` +
-    `▶️ \\/start\\_virgen — Virgen'i başlat\n` +
-    `▶️ \\/start\\_raichu — Raichu'yu başlat\n` +
-    `▶️ \\/start\\_welles — Welles'i başlat\n` +
-    `▶️ \\/start\\_squirtle — Squirtle'ı başlat\n` +
-    `▶️ \\/start\\_all — İkisini de başlat\n` +
-    `⏹ \\/stop\\_all — Tümünü durdur\n` +
-    `📊 /status — Durum + piyasa + pozisyon\n` +
-    `⚙️ /config — Mevcut ayarlar\n` +
-    `💰 /pnl — Son trade sonuçları (aktif ajanlar)\n\n` +
+    `⛩ *Multi-Agent Trading Bot — Komutlar*\n\n` +
+    `*Ajanlar:*\n` +
+    `▶️ /start\\_all — Tümünü başlat\n` +
+    `▶️ /start\\_ichi  /stop\\_ichi\n` +
+    `▶️ /start\\_virgen  /stop\\_virgen\n` +
+    `▶️ /start\\_raichu  /stop\\_raichu\n` +
+    `▶️ /start\\_welles  /stop\\_welles\n` +
+    `▶️ /start\\_squirtle  /stop\\_squirtle\n` +
+    `▶️ /start\\_friday  /stop\\_friday\n` +
+    `⏹ /stop\\_all — Tümünü durdur\n\n` +
+    `*Bilgi:*\n` +
+    `📊 /status — Durum + piyasa\n` +
+    `💰 /pnl — Açık pozisyonlar (kompakt)\n` +
+    `⚙️ /config — Mevcut ayarlar\n\n` +
     `*Mod:*\n` +
-    `🟢 /live — Canlı trade modu\n` +
-    `🔸 /dry — Kuru test modu\n\n` +
+    `🟢 /live — Canlı trade\n` +
+    `🔸 /dry — Test modu\n\n` +
     `*Ayarlar:*\n` +
-    `\`/set leverage 3\`\n` +
-    `\`/set size 50\`\n` +
-    `\`/set tp 2\``
+    `\`/set leverage 3\`  \`/set size 50\`  \`/set tp 2\``
   );
 });
 
 bot.onText(/\/pnl$/, async (msg) => {
   if (!isAuthorized(msg)) return;
 
-  let text = `📊 *Açık Pozisyonlar (Aktif Ajanlar)*\n\n`;
+  const now = new Date();
+  const ts = `${now.getDate()} ${now.toLocaleString("tr", { month: "short" })} ${now.getHours().toString().padStart(2,"0")}:${now.getMinutes().toString().padStart(2,"0")}`;
+  let text = `📊 *AÇIK POZİSYONLAR*  _${ts}_\n`;
   let overallPnl = 0;
   let hasPositions = false;
 
@@ -469,22 +498,41 @@ bot.onText(/\/pnl$/, async (msg) => {
 
     try {
       const state = await getAccountState(agent);
-      if (state.activePositions.length > 0) {
-        hasPositions = true;
-        text += `🤖 *${agent.name}*\n`;
-        let agentPnl = 0;
-        for (const pos of state.activePositions) {
-          const emoji = pos.pnl >= 0 ? "🟢" : "🔴";
-          text += `  └ ${emoji} ${pos.coin} ${pos.side.toUpperCase()}\n`;
-          text += `      Entry: $${pos.entryPrice.toFixed(2)} | Size: ${pos.size.toFixed(4)}\n`;
-          text += `      PnL: $${pos.pnl >= 0 ? "+" : ""}${pos.pnl.toFixed(2)}\n`;
-          agentPnl += pos.pnl;
-        }
-        overallPnl += agentPnl;
-        text += `  *Alt Toplam PnL: $${agentPnl >= 0 ? "+" : ""}${agentPnl.toFixed(2)}*\n\n`;
+      text += `\n━━━ *${agent.name}* ━━━\n`;
+
+      if (state.activePositions.length === 0) {
+        text += `  _Açık pozisyon yok_\n`;
+        continue;
       }
+
+      hasPositions = true;
+      let agentPnl = 0;
+
+      for (const pos of state.activePositions) {
+        const isLong = pos.side === "long";
+        const dir = isLong ? "⬆️LONG " : "⬇️SHORT";
+        const warn = pos.pnl < 0 ? " ⚠️" : "";
+        const pnlStr = `${pos.pnl >= 0 ? "+" : ""}$${pos.pnl.toFixed(2)}`;
+        // Format prices — shorten for readability
+        const entryFmt = pos.entryPrice >= 1000
+          ? pos.entryPrice.toFixed(0)
+          : pos.entryPrice >= 1
+          ? pos.entryPrice.toFixed(2)
+          : pos.entryPrice.toPrecision(4);
+        const markFmt = pos.markPrice >= 1000
+          ? pos.markPrice.toFixed(0)
+          : pos.markPrice >= 1
+          ? pos.markPrice.toFixed(2)
+          : pos.markPrice.toPrecision(4);
+        text += `  ${pos.coin}  ${dir}  ${pos.leverage}x  |  $${entryFmt} → $${markFmt}  |  PnL: ${pnlStr}${warn}\n`;
+        agentPnl += pos.pnl;
+      }
+
+      overallPnl += agentPnl;
+      const subEmoji = agentPnl >= 0 ? "🟢" : "🔴";
+      text += `  ${subEmoji} _Alt toplam: ${agentPnl >= 0 ? "+" : ""}$${agentPnl.toFixed(2)}_\n`;
     } catch {
-      // ignore
+      text += `  _Veri alınamadı_\n`;
     }
   }
 
@@ -493,8 +541,8 @@ bot.onText(/\/pnl$/, async (msg) => {
     return;
   }
 
-  const emoji = overallPnl >= 0 ? "🟢" : "🔴";
-  text += `${emoji} *Genel Toplam PnL: $${overallPnl >= 0 ? "+" : ""}${overallPnl.toFixed(2)}*`;
+  const totalEmoji = overallPnl >= 0 ? "🟢" : "🔴";
+  text += `\n${totalEmoji} *Toplam uPnL: ${overallPnl >= 0 ? "+" : ""}$${overallPnl.toFixed(2)}*`;
 
   await send(text);
 });
