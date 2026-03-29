@@ -508,6 +508,8 @@ let lastReportTime = Date.now();
 
 const lastSignalMap = new Map<string, number>();
 const pendingCloseMap = new Map<string, number>();
+// Agent + pair bazında açık işlem kilitleyici — çift giriş önleyici
+const pendingOpenMap = new Map<string, number>();
 
 async function tradingTick(): Promise<void> {
   const activeAgents = Object.values(agents).filter(a => a.active);
@@ -593,8 +595,20 @@ async function tradingTick(): Promise<void> {
             `Size: $${totalSize} (Kişi Başına)`
           );
 
-          // Uygun olan tüm ajanlar için işleme gir
+          // Uygun olan tüm ajanlar için işleme gir (çift giriş kontrolü)
           for (const agent of eligibleAgents) {
+            const openKey = `${agent.name}:${pair}`;
+            const lastOpenTime = pendingOpenMap.get(openKey) || 0;
+
+            // Aynı agent + pair için son 10 dakikada zaten açma isteği gönderdik mi?
+            if (Date.now() - lastOpenTime < 10 * 60 * 1000) {
+              console.log(`[DUPLICATE BLOCKED] ${agent.name} / ${pair} — son ${Math.round((Date.now() - lastOpenTime) / 1000)} sn önce açıldı`);
+              continue;
+            }
+
+            // Kilidi hemen set et (job cevabı gelmeden önce de), çift ateşlemeyi önle
+            pendingOpenMap.set(openKey, Date.now());
+
             if (!dryRunMode) {
               try {
                 const jobId = await openPosition({
@@ -606,6 +620,8 @@ async function tradingTick(): Promise<void> {
                 await send(`🟢 *[${agent.name}]* AÇILDI — ACP Job: #${jobId}`);
                 anyStateChanged = true;
               } catch (e: any) {
+                // Hata alırsak kilidi geri al ki bir sonraki tick'te tekrar deneyebilelim
+                pendingOpenMap.delete(openKey);
                 await send(`❌ *[${agent.name}]* Trade başarısız: ${e.message ?? e}`);
               }
             } else {
