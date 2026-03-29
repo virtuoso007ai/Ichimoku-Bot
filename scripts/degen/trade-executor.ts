@@ -121,9 +121,6 @@ export async function closePosition(
     serviceRequirements: {
       action: "close",
       pair: params.pair,
-      side: params.side,
-      size: params.size.toString(),
-      leverage: params.leverage,
     },
   };
 
