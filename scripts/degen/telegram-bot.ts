@@ -98,6 +98,16 @@ if (process.env.RAICHU_LITE_AGENT_API_KEY) {
   };
 }
 
+if (process.env.WELLES_LITE_AGENT_API_KEY) {
+  agents["welles"] = {
+    name: "Welles Wilder",
+    apiKey: process.env.WELLES_LITE_AGENT_API_KEY,
+    hlWallet: process.env.WELLES_HL_WALLET_ADDRESS || "",
+    subaccount: process.env.WELLES_SUBACCOUNT_ADDRESS || "",
+    active: false,
+  };
+}
+
 // Fallback logic for backward compatibility
 if (Object.keys(agents).length === 0 && process.env.LITE_AGENT_API_KEY) {
   agents["default"] = {
@@ -168,7 +178,7 @@ function isAuthorized(msg: TgMessage): boolean {
 // Telegram Commands
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_all)$/, async (msg, match) => {
+bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_welles|start_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -201,6 +211,15 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_all)$/, async (msg, ma
     }
   }
 
+  if (cmd === "start_welles" || cmd === "start_all") {
+    if (agents["welles"]) {
+      agents["welles"].active = true;
+      activated.push("Welles Wilder");
+    } else {
+      await send("⚠️ Welles kimlik bilgileri (.env) bulunamadı.");
+    }
+  }
+
   if (activated.length === 0) return;
 
   const modeText = dryRunMode ? "🔸 DRY RUN" : "🟢 LIVE";
@@ -219,7 +238,7 @@ bot.onText(/\/(start_ichi|start_virgen|start_raichu|start_all)$/, async (msg, ma
   }
 });
 
-bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_all)$/, async (msg, match) => {
+bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_welles|stop_all)$/, async (msg, match) => {
   if (!isAuthorized(msg)) return;
   const cmd = match?.[1] || "";
 
@@ -243,6 +262,13 @@ bot.onText(/\/(stop_ichi|stop_virgen|stop_raichu|stop_all)$/, async (msg, match)
     if (agents["raichu"]) {
       agents["raichu"].active = false;
       deactivated.push("Super Saiyan Raichu");
+    }
+  }
+
+  if (cmd === "stop_welles" || cmd === "stop_all") {
+    if (agents["welles"]) {
+      agents["welles"].active = false;
+      deactivated.push("Welles Wilder");
     }
   }
 
@@ -387,6 +413,7 @@ bot.onText(/\/help$/, async (msg) => {
     `▶️ \\/start\\_ichi — Ichimoku'yu başlat\n` +
     `▶️ \\/start\\_virgen — Virgen'i başlat\n` +
     `▶️ \\/start\\_raichu — Raichu'yu başlat\n` +
+    `▶️ \\/start\\_welles — Welles'i başlat\n` +
     `▶️ \\/start\\_all — İkisini de başlat\n` +
     `⏹ \\/stop\\_all — Tümünü durdur\n` +
     `📊 /status — Durum + piyasa + pozisyon\n` +
@@ -624,7 +651,7 @@ send(
   `⛩ *Multi-Agent Trading Bot Online*\n\n` +
   `Mode: 🔸 DRY RUN (güvenli başlangıç)\n` +
   `Komutlar için /help yazın.\n` +
-  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi, \\/start\\_virgen veya \\/start\\_raichu kullanın.`
+  `Agent'ları başlatmak için \\/start\\_all, \\/start\\_ichi, \\/start\\_virgen, \\/start\\_raichu veya \\/start\\_welles kullanın.`
 ).then(() => {
   console.log("✅ Telegram bağlantısı başarılı. Komut bekleniyor...");
 });
