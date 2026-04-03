@@ -641,11 +641,12 @@ async function tradingTick(): Promise<void> {
 
         // Sinyal bildirimi her zaman gönder (uygun ajan olsun ya da olmasın)
         lastSignalMap.set(pair, now); // cooldown'ı artık set ettikten sonra başlat
+        const contrarianSide = signal.side === "long" ? "short" : "long";
         const agentInfo = eligibleAgents.length > 0
-          ? `Giriş: *${eligibleAgents.map(a => a.name).join(", ")}*`
+          ? `Giriş: *${eligibleAgents.map(a => a.name).join(", ")}*  ↩️ KONTRARIAN: ${contrarianSide.toUpperCase()}`
           : `⚠️ Tüm ajanlar bu pair'de zaten pozisyonda veya bakiye yetersiz`;
         await send(
-          `⚡ *SİNYAL: ${signal.side.toUpperCase()} ${pair}*\n` +
+          `⚡ *SİNYAL: ${signal.side.toUpperCase()} ${pair}*  →  İşlem: *${contrarianSide.toUpperCase()}*\n` +
           `${agentInfo}\n\n` +
           `Fiyat: $${data.price.toFixed(2)}\n` +
           `EMA9: ${data.emaFast.toFixed(2)} ${signal.side === "long" ? ">" : "<"} EMA21: ${data.emaSlow.toFixed(2)} ✓\n` +
@@ -663,11 +664,11 @@ async function tradingTick(): Promise<void> {
             try {
               const jobId = await openPosition({
                 pair,
-                side: signal.side,
+                side: contrarianSide,  // ↩️ Sinyal TERSINE işlem aç
                 size: totalSize,
                 leverage: config.leverage,
               }, agent);
-              await send(`🟢 *[${agent.name}]* AÇILDI — ACP Job: #${jobId}`);
+              await send(`🟢 *[${agent.name}]* AÇILDI ${contrarianSide.toUpperCase()} — ACP Job: #${jobId}`);
               anyStateChanged = true;
             } catch (e: any) {
               // Hata alırsak kilidi geri al ki bir sonraki tick'te tekrar deneyebilelim
@@ -675,7 +676,7 @@ async function tradingTick(): Promise<void> {
               await send(`❌ *[${agent.name}]* Trade başarısız: ${e.message ?? e}`);
             }
           } else {
-            await send(`🔸 DRY RUN — *[${agent.name}]* trade açılmadı`);
+            await send(`🔸 DRY RUN — *[${agent.name}]* ${contrarianSide.toUpperCase()} açılmadı`);
           }
         }
       }
